@@ -1,0 +1,6 @@
+intall uniswap dependecies to foundry
+
+forge install uniswap/v3-core
+forge install uniswap/v3-periphery
+forge install OpenZeppelin/openzeppelin-contracts
+
