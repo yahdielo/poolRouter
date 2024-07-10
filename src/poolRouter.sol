@@ -4,6 +4,8 @@ pragma solidity ^0.8.0;
 import  {IUniswapV3Pool} from "./interfaces/IUniswapV3Pool.sol";
 import  {IUniswapV3SwapCallback} from "./interfaces/IUniswapV3SwapCallback.sol";
 import {IERC20} from "./interfaces/IERC20.sol";
+import {TickMath} from "./lib/TickMath.sol";
+import {Path} from "./lib/path.sol";
 /// @title Provides functions for deriving a pool address from the factory, tokens, and the fee
 library PoolAddress {
     bytes32 internal constant POOL_INIT_CODE_HASH = 0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54;
@@ -127,6 +129,8 @@ contract poolRouter is IUniswapV3SwapCallback {
     IERC20 public immutable  usdc;
     address public immutable factory;
 
+    uint160 private constant MIN_SQRT_RATIO = 4295128739;
+    uint160 private constant MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342;
     event decodedData(bool);
 
     
@@ -144,39 +148,42 @@ contract poolRouter is IUniswapV3SwapCallback {
         // Approve the pool to spend WETH.
         weth.approve(address(pool), _amount);
 
-        uint160 sqrtPriceLimitX96 = 0;
         bool zeroForOne = true;
-        IUniswapV3Pool(pool).swap(
-           address(this),
-            zeroForOne,
-            int256(_amount),
-            sqrtPriceLimitX96,
-            abi.encode(msg.sender)
-        );
+       IUniswapV3Pool(pool).swap({
+            recipient: address(this),
+            zeroForOne: zeroForOne,
+            amountSpecified: int256(_amount),
+            sqrtPriceLimitX96: zeroForOne ? MIN_SQRT_RATIO + 1 : MAX_SQRT_RATIO - 1,
+            data: bytes("")
+        });
     }
 
-     /// @inheritdoc IUniswapV3SwapCallback
+    /// @inheritdoc IUniswapV3SwapCallback
     function uniswapV3SwapCallback(
         int256 amount0Delta,
         int256 amount1Delta,
         bytes calldata _data
     ) external override {
         require(amount0Delta > 0 || amount1Delta > 0); // swaps entirely within 0-liquidity regions are not supported
-        IUniswapV3SwapCallback.SwapCallbackData memory data = abi.decode(_data, (SwapCallbackData));
-
-        emit decodedData(true);
+        SwapCallbackData memory data = abi.decode(_data, (SwapCallbackData));
         
         address tokenIn = address(weth);
         address tokenOut = address(usdc);
-        uint24 fee = 500; //%0.05
-        CallbackValidation.verifyCallback(factory, address(weth), address(usdc), fee);
+        uint24 fee = 500;
+        // = data.path.decodeFirstPool();
+        CallbackValidation.verifyCallback(factory, tokenIn, tokenOut, fee);
 
         (bool isExactInput, uint256 amountToPay) =
             amount0Delta > 0
                 ? (tokenIn < tokenOut, uint256(amount0Delta))
                 : (tokenOut < tokenIn, uint256(amount1Delta));
+
         if (isExactInput) {
             pay(tokenIn, data.payer, msg.sender, amountToPay);
+        } else {
+            // note that because exact output swaps are executed in reverse order, tokenOut is actually tokenIn
+            pay(tokenOut, data.payer, msg.sender, amountToPay);
+            
         }
     }
 
@@ -191,5 +198,15 @@ contract poolRouter is IUniswapV3SwapCallback {
         } else {
             IERC20(token).transferFrom(payer, recipient, value);
         }
+    }
+
+    
+     /// @dev Returns the pool for the given token pair and fee. The pool contract may or may not exist.
+    function getPool(
+        address tokenA,
+        address tokenB,
+        uint24 fee
+    ) private view returns (IUniswapV3Pool) {
+        return IUniswapV3Pool(PoolAddress.computeAddress(factory, PoolAddress.getPoolKey(tokenA, tokenB, fee)));
     }
 }
