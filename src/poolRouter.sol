@@ -13,10 +13,6 @@ import {TransferHelper } from "./lib/TransferHelper.sol";
 contract poolRouter is IUniswapV3SwapCallback {
 
     using Path for bytes;
-    address brett = 0x532f27101965dd16442E59d40670FaF5eBB142E4;
-
-    event AmountIn(uint256);
-    event AmountOut(int256);
 
     uint160 private constant MIN_SQRT_RATIO = 4295128739;
     uint160 private constant MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342;
